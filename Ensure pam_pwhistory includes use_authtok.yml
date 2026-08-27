@@ -1,0 +1,94 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# Tenable / CIS Finding:
+# 5.3.3.3.3 Ensure pam_pwhistory includes use_authtok
+#
+# Configuration:
+#   pam_pwhistory.so
+#   remember=24
+#   enforce_for_root
+#   use_authtok
+#
+###############################################################################
+
+- name: Remediate CIS 5.3.3.3.3 - Ensure pam_pwhistory includes use_authtok
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Create/update PAM pwhistory profile
+    ###########################################################################
+
+    - name: Configure pam_pwhistory with use_authtok
+      ansible.builtin.copy:
+        dest: /usr/share/pam-configs/pwhistory
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          Name: pwhistory password history checking
+          Default: yes
+          Priority: 1024
+          Password-Type: Primary
+          Password:
+                  requisite pam_pwhistory.so remember=24 enforce_for_root use_authtok
+
+    ###########################################################################
+    # 2. Enable PAM profile
+    ###########################################################################
+
+    - name: Enable pwhistory PAM profile
+      ansible.builtin.command:
+        cmd: pam-auth-update --package --enable pwhistory
+      register: pam_update
+      changed_when: false
+
+    ###########################################################################
+    # 3. Verify use_authtok
+    ###########################################################################
+
+    - name: Check use_authtok in common-password
+      ansible.builtin.shell: |
+        grep -Pi '^\h*password\h+(requisite|required|sufficient)\h+pam_pwhistory\.so(\h+[^#\n\r]+)?\h+use_authtok\b' \
+        /etc/pam.d/common-password
+      register: pwhistory_use_authtok
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 4. Assert compliance
+    ###########################################################################
+
+    - name: Verify pam_pwhistory includes use_authtok
+      ansible.builtin.assert:
+        that:
+          - pwhistory_use_authtok.rc == 0
+          - "'pam_pwhistory.so' in pwhistory_use_authtok.stdout"
+          - "'use_authtok' in pwhistory_use_authtok.stdout"
+        fail_msg: >-
+          pam_pwhistory use_authtok is not configured in
+          /etc/pam.d/common-password.
+        success_msg: >-
+          pam_pwhistory use_authtok is correctly configured.
+
+    ###########################################################################
+    # 5. Display final status
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "CIS 5.3.3.3.3 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "PAM module: pam_pwhistory"
+          - "remember=24: ENABLED"
+          - "enforce_for_root: ENABLED"
+          - "use_authtok: ENABLED"
+          - "Status: COMPLIANT"
+          - "=============================================="

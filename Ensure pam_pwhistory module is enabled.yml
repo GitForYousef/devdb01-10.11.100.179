@@ -1,0 +1,134 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# CIS / Tenable Finding:
+# 5.3.2.4 Ensure pam_pwhistory module is enabled
+#
+# Purpose:
+#   Enable PAM password history using pam_pwhistory.
+#
+# Configuration:
+#   remember=24
+#   enforce_for_root
+#   use_authtok
+#
+# This prevents users from reusing their previous 24 passwords.
+#
+###############################################################################
+
+- name: Remediate CIS 5.3.2.4 - Enable pam_pwhistory
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Create PAM configuration profile
+    ###########################################################################
+
+    - name: Create pam_pwhistory PAM profile
+      ansible.builtin.copy:
+        dest: /usr/share/pam-configs/pwhistory
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          Name: Enable pam_pwhistory password history
+          Default: yes
+          Priority: 256
+          Password-Type: Primary
+          Password:
+                  requisite pam_pwhistory.so remember=24 enforce_for_root use_authtok
+      register: pwhistory_profile
+
+    ###########################################################################
+    # 2. Enable the PAM profile
+    ###########################################################################
+
+    - name: Enable pam_pwhistory PAM profile
+      ansible.builtin.command:
+        cmd: pam-auth-update --package --enable pwhistory
+      register: pam_auth_update
+      changed_when: false
+
+    ###########################################################################
+    # 3. Verify PAM profile exists
+    ###########################################################################
+
+    - name: Verify pam_pwhistory profile exists
+      ansible.builtin.stat:
+        path: /usr/share/pam-configs/pwhistory
+      register: pwhistory_profile_check
+
+    - name: Assert pam_pwhistory profile exists
+      ansible.builtin.assert:
+        that:
+          - pwhistory_profile_check.stat.exists
+        fail_msg: "pam_pwhistory PAM profile was not created."
+        success_msg: "pam_pwhistory PAM profile exists."
+
+    ###########################################################################
+    # 4. Check common-password configuration
+    ###########################################################################
+
+    - name: Check pam_pwhistory configuration in common-password
+      ansible.builtin.shell: |
+        grep -E 'pam_pwhistory\.so.*remember=24' /etc/pam.d/common-password
+      register: pwhistory_common_password
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 5. Verify pam_pwhistory is enabled
+    ###########################################################################
+
+    - name: Verify pam_pwhistory is enabled
+      ansible.builtin.assert:
+        that:
+          - pwhistory_common_password.rc == 0
+          - "'pam_pwhistory.so' in pwhistory_common_password.stdout"
+          - "'remember=24' in pwhistory_common_password.stdout"
+        fail_msg: >-
+          pam_pwhistory is not correctly configured in
+          /etc/pam.d/common-password.
+        success_msg: >-
+          pam_pwhistory is enabled with remember=24.
+
+    ###########################################################################
+    # 6. Verify enforce_for_root and use_authtok
+    ###########################################################################
+
+    - name: Verify pam_pwhistory options
+      ansible.builtin.shell: |
+        grep -E 'pam_pwhistory\.so' /etc/pam.d/common-password
+      register: pwhistory_options
+      changed_when: false
+
+    - name: Assert required pam_pwhistory options
+      ansible.builtin.assert:
+        that:
+          - "'enforce_for_root' in pwhistory_options.stdout"
+          - "'use_authtok' in pwhistory_options.stdout"
+        fail_msg: >-
+          Required pam_pwhistory options are missing.
+        success_msg: >-
+          pam_pwhistory has enforce_for_root and use_authtok configured.
+
+    ###########################################################################
+    # 7. Display final status
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "PAM pwhistory CIS 5.3.2.4 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Profile: /usr/share/pam-configs/pwhistory"
+          - "Password history: 24 passwords"
+          - "Root enforcement: ENABLED"
+          - "PAM profile enabled: YES"
+          - "common-password verified: YES"
+          - "=============================================="

@@ -1,0 +1,147 @@
+---
+###############################################################################
+# Ansible Remediation
+# CIS / Tenable Finding:
+# 3.2.1 Ensure dccp kernel module is not available
+#
+# Purpose:
+#   Disable the DCCP kernel module by:
+#     - Unloading it if currently loaded
+#     - Preventing it from being loaded in the future
+#     - Blacklisting the module
+#
+###############################################################################
+
+- name: Remediate CIS 3.2.1 - Disable DCCP kernel module
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Check whether DCCP module is currently loaded
+    ###########################################################################
+
+    - name: Check if DCCP kernel module is loaded
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "dccp" {print $1}'
+      register: dccp_loaded
+      changed_when: false
+
+    - name: Display current DCCP module status
+      ansible.builtin.debug:
+        msg: >-
+          DCCP module loaded:
+          {{ 'YES' if dccp_loaded.stdout | trim == 'dccp' else 'NO' }}
+
+    ###########################################################################
+    # 2. Unload DCCP if currently loaded
+    ###########################################################################
+
+    - name: Unload DCCP kernel module
+      ansible.builtin.command:
+        cmd: modprobe -r dccp
+      when: dccp_loaded.stdout | trim == "dccp"
+      register: dccp_unload
+      failed_when: false
+      changed_when: dccp_unload.rc == 0
+
+    ###########################################################################
+    # 3. Create permanent modprobe configuration
+    ###########################################################################
+
+    - name: Disable DCCP kernel module
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/60-dccp.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          install dccp /bin/false
+          blacklist dccp
+      register: dccp_config
+
+    ###########################################################################
+    # 4. Refresh module dependency information
+    ###########################################################################
+
+    - name: Refresh kernel module dependencies
+      ansible.builtin.command:
+        cmd: depmod -a
+      when: dccp_config.changed
+      changed_when: true
+
+    ###########################################################################
+    # 5. Verify configuration file
+    ###########################################################################
+
+    - name: Read DCCP configuration
+      ansible.builtin.slurp:
+        src: /etc/modprobe.d/60-dccp.conf
+      register: dccp_config_check
+
+    - name: Verify DCCP configuration
+      ansible.builtin.assert:
+        that:
+          - "'install dccp /bin/false' in (dccp_config_check.content | b64decode)"
+          - "'blacklist dccp' in (dccp_config_check.content | b64decode)"
+        fail_msg: "DCCP modprobe configuration is incorrect."
+        success_msg: "DCCP modprobe configuration is correctly configured."
+
+    ###########################################################################
+    # 6. Verify DCCP is not currently loaded
+    ###########################################################################
+
+    - name: Check DCCP module after remediation
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "dccp" {print $1}'
+      register: dccp_after
+      changed_when: false
+
+    - name: Verify DCCP module is unloaded
+      ansible.builtin.assert:
+        that:
+          - dccp_after.stdout | trim == ""
+        fail_msg: "DCCP kernel module is still loaded."
+        success_msg: "DCCP kernel module is not loaded."
+
+    ###########################################################################
+    # 7. Test that DCCP cannot be loaded
+    ###########################################################################
+
+    - name: Attempt to load DCCP module
+      ansible.builtin.command:
+        cmd: modprobe dccp
+      register: dccp_modprobe_test
+      changed_when: false
+      failed_when: false
+
+    - name: Verify DCCP cannot be loaded
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "dccp" {print $1}'
+      register: dccp_final
+      changed_when: false
+
+    - name: Final DCCP verification
+      ansible.builtin.assert:
+        that:
+          - dccp_final.stdout | trim == ""
+        fail_msg: "DCCP module can still be loaded."
+        success_msg: "DCCP module is successfully disabled."
+
+    ###########################################################################
+    # 8. Final status
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "DCCP CIS 3.2.1 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Configuration: /etc/modprobe.d/60-dccp.conf"
+          - "DCCP loaded: NO"
+          - "DCCP loading disabled: YES"
+          - "Blacklist configured: YES"
+          - "=============================================="

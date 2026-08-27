@@ -1,0 +1,106 @@
+---
+- name: CIS 5.4.3.3 - Configure Default User umask
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    umask_value: "027"
+
+  tasks:
+
+    #####################################################################
+    # 1. Ensure /etc/login.defs contains UMASK 027
+    #####################################################################
+
+    - name: Configure UMASK in /etc/login.defs
+      ansible.builtin.lineinfile:
+        path: /etc/login.defs
+        regexp: '^\s*UMASK\s+'
+        line: "UMASK {{ umask_value }}"
+        state: present
+        backup: true
+
+    #####################################################################
+    # 2. Create system-wide umask configuration
+    #####################################################################
+
+    - name: Configure default umask in /etc/profile.d
+      ansible.builtin.copy:
+        dest: /etc/profile.d/60-default_umask.sh
+        content: |
+          # CIS 5.4.3.3 - Default user umask
+          umask 027
+        owner: root
+        group: root
+        mode: '0644'
+        backup: true
+
+    #####################################################################
+    # 3. Find less restrictive umask settings in /etc/profile.d/*.sh
+    #####################################################################
+
+    - name: Find shell configuration files in /etc/profile.d
+      ansible.builtin.find:
+        paths: /etc/profile.d
+        patterns: "*.sh"
+        file_type: file
+      register: profile_d_files
+
+    - name: Remove less restrictive umask settings
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: '^(\s*)umask\s+0?(0[01][0-7]|0[0-7][^7]|[^0][0-7][0-7])(\s*|\s+.*)$'
+        replace: '\1# CIS: less restrictive umask disabled - \g<0>'
+        backup: true
+      loop: "{{ profile_d_files.files }}"
+      when: item.path != '/etc/profile.d/60-default_umask.sh'
+
+    #####################################################################
+    # 4. Verify /etc/login.defs
+    #####################################################################
+
+    - name: Check UMASK in /etc/login.defs
+      ansible.builtin.shell: |
+        grep -Pi '^[\s]*UMASK[\s]+027\b' /etc/login.defs
+      register: login_defs_umask
+      changed_when: false
+
+    - name: Verify login.defs UMASK
+      ansible.builtin.assert:
+        that:
+          - login_defs_umask.rc == 0
+        fail_msg: "UMASK 027 is not configured in /etc/login.defs."
+        success_msg: "UMASK 027 is configured in /etc/login.defs."
+
+    #####################################################################
+    # 5. Verify /etc/profile.d configuration
+    #####################################################################
+
+    - name: Check system-wide profile umask
+      ansible.builtin.shell: |
+        grep -PH '^\s*umask\s+0?027\b' /etc/profile.d/*.sh
+      register: profile_umask
+      changed_when: false
+
+    - name: Display profile.d umask configuration
+      ansible.builtin.debug:
+        var: profile_umask.stdout_lines
+
+    - name: Verify profile.d UMASK
+      ansible.builtin.assert:
+        that:
+          - profile_umask.rc == 0
+        fail_msg: "No compliant umask 027 found in /etc/profile.d/*.sh."
+        success_msg: "Compliant umask 027 found in /etc/profile.d/*.sh."
+
+    #####################################################################
+    # 6. Final status
+    #####################################################################
+
+    - name: CIS 5.4.3.3 remediation completed
+      ansible.builtin.debug:
+        msg:
+          - "UMASK 027 configured in /etc/login.defs"
+          - "umask 027 configured in /etc/profile.d/60-default_umask.sh"
+          - "CIS 5.4.3.3 remediation completed successfully."

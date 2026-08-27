@@ -1,0 +1,125 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# Tenable / CIS Finding:
+# 5.3.3.4.1 Ensure pam_unix does not include nullok
+#
+###############################################################################
+
+- name: Remediate CIS 5.3.3.4.1 - Remove nullok from pam_unix
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Check PAM profiles for pam_unix + nullok
+    ###########################################################################
+
+    - name: Find pam-auth-update profiles containing pam_unix nullok
+      ansible.builtin.shell: |
+        grep -PH -- '^\h*([^#\n\r]+\h+)?pam_unix\.so\h+([^#\n\r]+\h+)?nullok\b' \
+        /usr/share/pam-configs/* 2>/dev/null
+      register: pam_unix_nullok_profiles
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 2. Remove nullok from the Unix PAM profile
+    ###########################################################################
+
+    - name: Remove nullok from pam_unix profile
+      ansible.builtin.replace:
+        path: /usr/share/pam-configs/unix
+        regexp: '(\bpam_unix\.so\b[^#\n\r]*?)\s+nullok\b'
+        replace: '\1'
+        backup: true
+      register: unix_profile_change
+      when: pam_unix_nullok_profiles.stdout | length > 0
+
+    ###########################################################################
+    # 3. Rebuild common PAM configuration
+    ###########################################################################
+
+    - name: Enable/update unix PAM profile
+      ansible.builtin.command:
+        cmd: pam-auth-update --enable unix
+      register: pam_auth_update
+      changed_when: true
+      when: unix_profile_change is changed
+
+    ###########################################################################
+    # 4. Check common-auth directly
+    ###########################################################################
+
+    - name: Check common-auth for pam_unix nullok
+      ansible.builtin.shell: |
+        grep -PH -- '^\h*[^#\n\r]+\h+pam_unix\.so\b[^#\n\r]+nullok\b' \
+        /etc/pam.d/common-auth
+      register: common_auth_nullok
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 5. Remove nullok directly if still present
+    #
+    # This is a safety step in case common-auth is custom/generated differently.
+    ###########################################################################
+
+    - name: Remove nullok directly from common-auth if still present
+      ansible.builtin.replace:
+        path: /etc/pam.d/common-auth
+        regexp: '(\bpam_unix\.so\b[^#\n\r]*?)\s+nullok\b'
+        replace: '\1'
+        backup: true
+      when: common_auth_nullok.rc == 0
+
+    ###########################################################################
+    # 6. Final verification
+    ###########################################################################
+
+    - name: Verify pam_unix does not contain nullok
+      ansible.builtin.shell: |
+        grep -PH -- '^\h*([^#\n\r]+\h+)?pam_unix\.so\b([^#\n\r]+)?nullok\b' \
+        /etc/pam.d/common-auth \
+        /etc/pam.d/common-account \
+        /etc/pam.d/common-password \
+        /etc/pam.d/common-session \
+        /etc/pam.d/common-session-noninteractive
+      register: final_nullok_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 7. Assert compliance
+    ###########################################################################
+
+    - name: Assert pam_unix does not contain nullok
+      ansible.builtin.assert:
+        that:
+          - final_nullok_check.rc != 0
+        fail_msg: |
+          pam_unix still contains the nullok option.
+
+          Found:
+          {{ final_nullok_check.stdout }}
+        success_msg: |
+          pam_unix does not contain nullok.
+          CIS 5.3.3.4.1 is remediated.
+
+    ###########################################################################
+    # 8. Display result
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "CIS 5.3.3.4.1 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "pam_unix nullok option removed"
+          - "common-auth verified"
+          - "Status: COMPLIANT"
+          - "=============================================="

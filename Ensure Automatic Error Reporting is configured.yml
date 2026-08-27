@@ -1,0 +1,126 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# Tenable / CIS Finding:
+# 1.5.6 Ensure Automatic Error Reporting is configured
+#
+# Ubuntu:
+#   Disable Apport automatic error reporting
+#
+###############################################################################
+
+- name: Remediate CIS 1.5.6 - Disable automatic error reporting
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Configure Apport
+    ###########################################################################
+
+    - name: Disable Apport automatic error reporting
+      ansible.builtin.lineinfile:
+        path: /etc/default/apport
+        regexp: '^\s*enabled\s*='
+        line: 'enabled=0'
+        create: true
+        owner: root
+        group: root
+        mode: '0644'
+      register: apport_config
+
+    ###########################################################################
+    # 2. Stop Apport service
+    ###########################################################################
+
+    - name: Stop apport service
+      ansible.builtin.systemd:
+        name: apport.service
+        state: stopped
+      failed_when: false
+
+    ###########################################################################
+    # 3. Mask Apport service
+    ###########################################################################
+
+    - name: Mask apport service
+      ansible.builtin.systemd:
+        name: apport.service
+        masked: true
+
+    ###########################################################################
+    # 4. Verify configuration
+    ###########################################################################
+
+    - name: Check Apport enabled setting
+      ansible.builtin.shell: |
+        grep -P '^\h*enabled\h*=\h*0\b' /etc/default/apport
+      register: apport_enabled_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 5. Verify service status
+    ###########################################################################
+
+    - name: Check apport service status
+      ansible.builtin.command:
+        cmd: systemctl is-active apport.service
+      register: apport_active_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 6. Verify service is masked
+    ###########################################################################
+
+    - name: Check whether apport service is masked
+      ansible.builtin.command:
+        cmd: systemctl is-enabled apport.service
+      register: apport_enabled_service_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 7. Assert compliance
+    ###########################################################################
+
+    - name: Assert Apport is disabled
+      ansible.builtin.assert:
+        that:
+          - apport_enabled_check.rc == 0
+          - "'enabled=0' in apport_enabled_check.stdout"
+          - apport_active_check.stdout != "active"
+          - apport_enabled_service_check.stdout == "masked"
+        fail_msg: |
+          Apport is not correctly disabled.
+
+          /etc/default/apport:
+          {{ apport_enabled_check.stdout }}
+
+          Service status:
+          {{ apport_active_check.stdout }}
+
+          Service enabled state:
+          {{ apport_enabled_service_check.stdout }}
+        success_msg: |
+          Apport automatic error reporting is correctly disabled.
+
+    ###########################################################################
+    # 8. Display final result
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "CIS 1.5.6 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Apport configuration: enabled=0"
+          - "Apport service: stopped"
+          - "Apport service: masked"
+          - "Status: COMPLIANT"
+          - "=============================================="

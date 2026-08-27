@@ -1,0 +1,172 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# Tenable / CIS Finding:
+# 5.3.2.2 Ensure pam_faillock module is enabled
+#
+###############################################################################
+
+- name: Remediate CIS 5.3.2.2 - Enable pam_faillock
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Create faillock profile - authfail
+    ###########################################################################
+
+    - name: Create pam-auth-update faillock profile
+      ansible.builtin.copy:
+        dest: /usr/share/pam-configs/faillock
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          Name: Enable pam_faillock to deny access
+          Default: yes
+          Priority: 0
+          Auth-Type: Primary
+          Auth:
+                  [default=die] pam_faillock.so authfail
+
+    ###########################################################################
+    # 2. Create faillock_notify profile - preauth + account
+    ###########################################################################
+
+    - name: Create pam-auth-update faillock_notify profile
+      ansible.builtin.copy:
+        dest: /usr/share/pam-configs/faillock_notify
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          Name: Notify of failed login attempts and reset count upon success
+          Default: yes
+          Priority: 1024
+          Auth-Type: Primary
+          Auth:
+                  requisite pam_faillock.so preauth
+          Account-Type: Primary
+          Account:
+                  required pam_faillock.so
+
+    ###########################################################################
+    # 3. Enable faillock profile
+    ###########################################################################
+
+    - name: Enable faillock PAM profile
+      ansible.builtin.command:
+        cmd: pam-auth-update --package --enable faillock
+      register: faillock_enable
+      changed_when: false
+
+    ###########################################################################
+    # 4. Enable faillock_notify profile
+    ###########################################################################
+
+    - name: Enable faillock_notify PAM profile
+      ansible.builtin.command:
+        cmd: pam-auth-update --package --enable faillock_notify
+      register: faillock_notify_enable
+      changed_when: false
+
+    ###########################################################################
+    # 5. Verify preauth
+    ###########################################################################
+
+    - name: Check pam_faillock preauth configuration
+      ansible.builtin.shell: |
+        grep -Pi '^\h*auth\h+([^#\n\r]+)\h+pam_faillock\.so\h+([^#\n\r]+\h+)?preauth\b' \
+        /etc/pam.d/common-auth
+      register: faillock_preauth_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 6. Verify authfail
+    ###########################################################################
+
+    - name: Check pam_faillock authfail configuration
+      ansible.builtin.shell: |
+        grep -Pi '^\h*auth\h+([^#\n\r]+)\h+pam_faillock\.so\h+([^#\n\r]+\h+)?authfail\b' \
+        /etc/pam.d/common-auth
+      register: faillock_authfail_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 7. Verify account
+    ###########################################################################
+
+    - name: Check pam_faillock account configuration
+      ansible.builtin.shell: |
+        grep -Pi '^\h*account\h+([^#\n\r]+)\h+pam_faillock\.so\b' \
+        /etc/pam.d/common-account
+      register: faillock_account_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 8. Assert preauth
+    ###########################################################################
+
+    - name: Assert pam_faillock preauth is enabled
+      ansible.builtin.assert:
+        that:
+          - faillock_preauth_check.rc == 0
+        fail_msg: |
+          pam_faillock preauth is missing from /etc/pam.d/common-auth.
+
+          Current result:
+          {{ faillock_preauth_check.stdout }}
+        success_msg: "pam_faillock preauth is enabled."
+
+    ###########################################################################
+    # 9. Assert authfail
+    ###########################################################################
+
+    - name: Assert pam_faillock authfail is enabled
+      ansible.builtin.assert:
+        that:
+          - faillock_authfail_check.rc == 0
+        fail_msg: |
+          pam_faillock authfail is missing from /etc/pam.d/common-auth.
+
+          Current result:
+          {{ faillock_authfail_check.stdout }}
+        success_msg: "pam_faillock authfail is enabled."
+
+    ###########################################################################
+    # 10. Assert account
+    ###########################################################################
+
+    - name: Assert pam_faillock account is enabled
+      ansible.builtin.assert:
+        that:
+          - faillock_account_check.rc == 0
+        fail_msg: |
+          pam_faillock account configuration is missing from
+          /etc/pam.d/common-account.
+
+          Current result:
+          {{ faillock_account_check.stdout }}
+        success_msg: "pam_faillock account configuration is enabled."
+
+    ###########################################################################
+    # 11. Display final result
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "CIS 5.3.2.2 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "pam_faillock preauth : ENABLED"
+          - "pam_faillock authfail: ENABLED"
+          - "pam_faillock account : ENABLED"
+          - "Status: COMPLIANT"
+          - "=============================================="

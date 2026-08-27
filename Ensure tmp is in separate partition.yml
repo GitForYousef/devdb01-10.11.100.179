@@ -1,0 +1,42 @@
+---
+# ============================================================
+# CIS - Ensure /tmp Located On Separate Partition
+# Ubuntu 22.04
+# ============================================================
+
+- name: "CIS - Configure /tmp as separate tmpfs filesystem"
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    - name: "CIS - Configure /tmp as separate tmpfs filesystem"
+      ansible.posix.mount:
+        path: /tmp
+        src: tmpfs
+        fstype: tmpfs
+        opts: "defaults,nodev,nosuid,noexec"
+        state: mounted
+
+    - name: "CIS - Ensure /tmp permissions are correct"
+      ansible.builtin.file:
+        path: /tmp
+        owner: root
+        group: root
+        mode: '1777'
+        state: directory
+
+    - name: "CIS - Verify /tmp is a separate filesystem"
+      ansible.builtin.command:
+        cmd: findmnt -n -o SOURCE,FSTYPE,TARGET /tmp
+      register: tmp_mount_check
+      changed_when: false
+
+    - name: "CIS - Confirm /tmp filesystem"
+      ansible.builtin.assert:
+        that:
+          - tmp_mount_check.rc == 0
+          - "'/tmp' in tmp_mount_check.stdout"
+        fail_msg: "/tmp is not mounted as a separate filesystem."
+        success_msg: "/tmp is mounted as a separate filesystem."

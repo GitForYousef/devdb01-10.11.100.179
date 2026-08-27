@@ -1,0 +1,74 @@
+---
+- name: Remediate CIS 2.1.21 - Configure Postfix for local-only mode
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    - name: Ensure Postfix is installed
+      ansible.builtin.package:
+        name: postfix
+        state: present
+
+    - name: Configure Postfix to listen only on loopback
+      ansible.builtin.lineinfile:
+        path: /etc/postfix/main.cf
+        regexp: '^[[:space:]]*inet_interfaces[[:space:]]*='
+        line: 'inet_interfaces = loopback-only'
+        insertafter: EOF
+        backup: true
+      register: postfix_config
+
+    - name: Apply Postfix configuration
+      ansible.builtin.command:
+        cmd: postfix check
+      changed_when: false
+
+    - name: Restart Postfix
+      ansible.builtin.systemd:
+        name: postfix
+        state: restarted
+        enabled: true
+
+    - name: Check Postfix effective inet_interfaces value
+      ansible.builtin.command:
+        cmd: postconf inet_interfaces
+      register: inet_interfaces
+      changed_when: false
+
+    - name: Verify Postfix is configured for loopback-only
+      ansible.builtin.assert:
+        that:
+          - "'loopback-only' in inet_interfaces.stdout"
+        fail_msg: "Postfix is NOT configured for loopback-only. Current value: {{ inet_interfaces.stdout }}"
+        success_msg: "Postfix is correctly configured for loopback-only mode."
+
+    - name: Check SMTP port 25 listeners
+      ansible.builtin.shell:
+        cmd: ss -lntp | grep ':25'
+      register: smtp_listeners
+      changed_when: false
+      failed_when: false
+
+    - name: Display SMTP port 25 listeners
+      ansible.builtin.debug:
+        msg:
+          - "Postfix inet_interfaces: {{ inet_interfaces.stdout | trim }}"
+          - "SMTP port 25 listeners:"
+          - "{{ smtp_listeners.stdout_lines }}"
+
+    - name: Verify Postfix is listening only on loopback
+      ansible.builtin.assert:
+        that:
+          - smtp_listeners.stdout is search('127\.0\.0\.1:25|::1:25')
+          - smtp_listeners.stdout is not search('0\.0\.0\.0:25')
+        fail_msg: "Postfix may still be listening on an external interface. Check: ss -lntp | grep ':25'"
+        success_msg: "Postfix SMTP port 25 is restricted to loopback."
+
+    - name: Display final remediation result
+      ansible.builtin.debug:
+        msg:
+          - "CIS 2.1.21 remediation completed successfully."
+          - "Postfix is configured with: inet_interfaces = loopback-only"
+          - "SMTP port 25 is restricted to loopback."

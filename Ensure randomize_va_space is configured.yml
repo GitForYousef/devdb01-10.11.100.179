@@ -1,0 +1,56 @@
+---
+- name: Remediate CIS 1.5.1 - Ensure randomize_va_space is configured
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+
+    - name: Configure persistent ASLR setting
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/60-kernel_sysctl.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          kernel.randomize_va_space = 2
+
+    - name: Apply sysctl configuration
+      ansible.builtin.command:
+        cmd: sysctl --system
+      register: sysctl_result
+      changed_when: true
+
+    - name: Set runtime ASLR value
+      ansible.builtin.command:
+        cmd: sysctl -w kernel.randomize_va_space=2
+      register: aslr_set
+      changed_when: true
+
+    - name: Check runtime ASLR value
+      ansible.builtin.command:
+        cmd: sysctl -n kernel.randomize_va_space
+      register: aslr_value
+      changed_when: false
+
+    - name: Verify ASLR value is 2
+      ansible.builtin.assert:
+        that:
+          - aslr_value.stdout | trim == "2"
+        fail_msg: "ASLR is NOT compliant. Current value: '{{ aslr_value.stdout | trim }}'"
+        success_msg: "ASLR is compliant. kernel.randomize_va_space = 2"
+
+    - name: Verify persistent ASLR configuration
+      ansible.builtin.shell:
+        cmd: grep -RqsE '^[[:space:]]*kernel\.randomize_va_space[[:space:]]*=[[:space:]]*2[[:space:]]*$' /etc/sysctl.conf /etc/sysctl.d/
+      register: persistent_check
+      changed_when: false
+      failed_when: persistent_check.rc != 0
+
+    - name: Display final result
+      ansible.builtin.debug:
+        msg:
+          - "CIS 1.5.1 remediation completed successfully"
+          - "Runtime value: {{ aslr_value.stdout | trim }}"
+          - "Persistent file: /etc/sysctl.d/60-kernel_sysctl.conf"
+          - "Required value: 2"

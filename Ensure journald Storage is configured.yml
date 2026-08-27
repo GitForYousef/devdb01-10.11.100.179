@@ -1,0 +1,66 @@
+---
+- name: CIS 6.1.1.1.5 - Configure journald persistent storage
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    - name: Create journald configuration directory
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure journald persistent storage
+      ansible.builtin.copy:
+        dest: /etc/systemd/journald.conf.d/60-journald.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Journal]
+          Storage=persistent
+      notify: Restart journald
+
+    - name: Flush handlers to apply journald configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Verify journald Storage configuration
+      ansible.builtin.command:
+        cmd: systemd-analyze cat-config systemd/journald.conf
+      register: journald_config
+      changed_when: false
+
+    - name: Check effective Storage setting
+      ansible.builtin.shell:
+        cmd: |
+          systemd-analyze cat-config systemd/journald.conf |
+          grep -P '^\s*Storage=persistent\s*$'
+      register: storage_check
+      changed_when: false
+      failed_when: storage_check.rc != 0
+
+    - name: Verify persistent journal directory
+      ansible.builtin.stat:
+        path: /var/log/journal
+      register: journal_dir
+
+    - name: Assert journald persistent storage is configured
+      ansible.builtin.assert:
+        that:
+          - storage_check.rc == 0
+          - journal_dir.stat.exists
+          - journal_dir.stat.isdir
+        success_msg: "CIS 6.1.1.1.5 compliant - journald Storage=persistent"
+        fail_msg: "journald persistent storage is not correctly configured"
+
+  handlers:
+
+    - name: Restart journald
+      ansible.builtin.systemd:
+        name: systemd-journald
+        state: restarted
+        daemon_reload: true

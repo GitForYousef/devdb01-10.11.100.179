@@ -1,0 +1,133 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# Tenable / CIS Finding:
+# 1.1.1.11 Ensure firewire-core kernel module is not available
+#
+# Purpose:
+#   Disable the FireWire kernel module to reduce kernel attack surface.
+#
+###############################################################################
+
+- name: Remediate CIS 1.1.1.11 - Disable firewire-core
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Check whether firewire-core is currently loaded
+    ###########################################################################
+
+    - name: Check if firewire-core is loaded
+      ansible.builtin.shell: |
+        lsmod | grep -E '^firewire_core\b|^firewire-core\b'
+      register: firewire_loaded
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 2. Unload firewire-core if currently loaded
+    ###########################################################################
+
+    - name: Unload firewire-core module
+      ansible.builtin.command:
+        cmd: modprobe -r firewire-core
+      when: firewire_loaded.rc == 0
+      register: firewire_unload
+      failed_when: false
+      changed_when: firewire_loaded.rc == 0
+
+    ###########################################################################
+    # 3. Create permanent module disable configuration
+    ###########################################################################
+
+    - name: Disable firewire-core kernel module
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/60-firewire-core.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          install firewire-core /bin/false
+          blacklist firewire-core
+      register: firewire_config
+
+    ###########################################################################
+    # 4. Reload modprobe configuration
+    ###########################################################################
+
+    - name: Reload module configuration
+      ansible.builtin.command:
+        cmd: depmod -a
+      changed_when: false
+
+    ###########################################################################
+    # 5. Verify module is not loaded
+    ###########################################################################
+
+    - name: Verify firewire-core is not loaded
+      ansible.builtin.shell: |
+        lsmod | grep -E '^firewire_core\b|^firewire-core\b'
+      register: firewire_loaded_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 6. Verify blacklist/install configuration
+    ###########################################################################
+
+    - name: Verify firewire-core is disabled
+      ansible.builtin.shell: |
+        modprobe --showconfig | grep -E '\b(install|blacklist)[[:space:]]+firewire[-_]core\b'
+      register: firewire_config_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # 7. Assert module is not loaded
+    ###########################################################################
+
+    - name: Assert firewire-core is not loaded
+      ansible.builtin.assert:
+        that:
+          - firewire_loaded_check.rc != 0
+        fail_msg: "firewire-core is still loaded."
+        success_msg: "firewire-core is not loaded."
+
+    ###########################################################################
+    # 8. Assert module loading is blocked
+    ###########################################################################
+
+    - name: Assert firewire-core loading is blocked
+      ansible.builtin.assert:
+        that:
+          - firewire_config_check.rc == 0
+          - firewire_config_check.stdout is search('install firewire[_-]core /bin/false')
+          - firewire_config_check.stdout is search('blacklist firewire[_-]core')
+        fail_msg: >-
+          firewire-core is not correctly blacklisted/disabled.
+          Actual configuration:
+          {{ firewire_config_check.stdout }}
+        success_msg: >-
+          firewire-core is correctly blacklisted and module loading is disabled.
+
+    ###########################################################################
+    # 9. Display final result
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "CIS 1.1.1.11 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Module: firewire-core"
+          - "Loaded: NO"
+          - "Install rule: /bin/false"
+          - "Blacklist: ENABLED"
+          - "Configuration: /etc/modprobe.d/60-firewire-core.conf"
+          - "Status: COMPLIANT"
+          - "=============================================="

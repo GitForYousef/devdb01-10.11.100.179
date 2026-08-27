@@ -1,0 +1,148 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# CIS / Tenable Finding:
+# 3.2.2 Ensure tipc kernel module is not available
+#
+# Purpose:
+#   Disable the TIPC kernel module by:
+#     - Unloading it if currently loaded
+#     - Preventing it from being loaded in the future
+#     - Blacklisting the module
+#
+###############################################################################
+
+- name: Remediate CIS 3.2.2 - Disable TIPC kernel module
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Check whether TIPC module is currently loaded
+    ###########################################################################
+
+    - name: Check if TIPC kernel module is loaded
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "tipc" {print $1}'
+      register: tipc_loaded
+      changed_when: false
+
+    - name: Display current TIPC module status
+      ansible.builtin.debug:
+        msg: >-
+          TIPC module loaded:
+          {{ 'YES' if tipc_loaded.stdout | trim == 'tipc' else 'NO' }}
+
+    ###########################################################################
+    # 2. Unload TIPC if currently loaded
+    ###########################################################################
+
+    - name: Unload TIPC kernel module
+      ansible.builtin.command:
+        cmd: modprobe -r tipc
+      when: tipc_loaded.stdout | trim == "tipc"
+      register: tipc_unload
+      failed_when: false
+      changed_when: tipc_unload.rc == 0
+
+    ###########################################################################
+    # 3. Create permanent modprobe configuration
+    ###########################################################################
+
+    - name: Disable TIPC kernel module
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/60-tipc.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          install tipc /bin/false
+          blacklist tipc
+      register: tipc_config
+
+    ###########################################################################
+    # 4. Refresh kernel module dependency information
+    ###########################################################################
+
+    - name: Refresh kernel module dependencies
+      ansible.builtin.command:
+        cmd: depmod -a
+      when: tipc_config.changed
+      changed_when: true
+
+    ###########################################################################
+    # 5. Verify configuration file
+    ###########################################################################
+
+    - name: Read TIPC configuration
+      ansible.builtin.slurp:
+        src: /etc/modprobe.d/60-tipc.conf
+      register: tipc_config_check
+
+    - name: Verify TIPC configuration
+      ansible.builtin.assert:
+        that:
+          - "'install tipc /bin/false' in (tipc_config_check.content | b64decode)"
+          - "'blacklist tipc' in (tipc_config_check.content | b64decode)"
+        fail_msg: "TIPC modprobe configuration is incorrect."
+        success_msg: "TIPC modprobe configuration is correctly configured."
+
+    ###########################################################################
+    # 6. Verify TIPC is not currently loaded
+    ###########################################################################
+
+    - name: Check TIPC module after remediation
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "tipc" {print $1}'
+      register: tipc_after
+      changed_when: false
+
+    - name: Verify TIPC module is unloaded
+      ansible.builtin.assert:
+        that:
+          - tipc_after.stdout | trim == ""
+        fail_msg: "TIPC kernel module is still loaded."
+        success_msg: "TIPC kernel module is not loaded."
+
+    ###########################################################################
+    # 7. Test that TIPC cannot be loaded
+    ###########################################################################
+
+    - name: Attempt to load TIPC module
+      ansible.builtin.command:
+        cmd: modprobe tipc
+      register: tipc_modprobe_test
+      changed_when: false
+      failed_when: false
+
+    - name: Verify TIPC cannot be loaded
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "tipc" {print $1}'
+      register: tipc_final
+      changed_when: false
+
+    - name: Final TIPC verification
+      ansible.builtin.assert:
+        that:
+          - tipc_final.stdout | trim == ""
+        fail_msg: "TIPC module can still be loaded."
+        success_msg: "TIPC module is successfully disabled."
+
+    ###########################################################################
+    # 8. Display final remediation status
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "TIPC CIS 3.2.2 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Configuration: /etc/modprobe.d/60-tipc.conf"
+          - "TIPC loaded: NO"
+          - "TIPC loading disabled: YES"
+          - "Blacklist configured: YES"
+          - "=============================================="

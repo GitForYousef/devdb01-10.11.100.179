@@ -1,0 +1,91 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# Tenable / CIS Finding:
+# 2.2.6 Ensure ftp client is not installed
+#
+# Packages:
+#   ftp
+#   tnftp
+#
+###############################################################################
+
+- name: Remediate CIS 2.2.6 - Remove FTP client
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # Remove FTP client packages
+    ###########################################################################
+
+    - name: Remove ftp and tnftp packages
+      ansible.builtin.apt:
+        name:
+          - ftp
+          - tnftp
+        state: absent
+        purge: true
+        autoremove: true
+        update_cache: false
+
+    ###########################################################################
+    # Verify ftp package is not installed
+    ###########################################################################
+
+    - name: Check ftp package
+      ansible.builtin.command:
+        cmd: dpkg-query -W -f='${Status}' ftp
+      register: ftp_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # Verify tnftp package is not installed
+    ###########################################################################
+
+    - name: Check tnftp package
+      ansible.builtin.command:
+        cmd: dpkg-query -W -f='${Status}' tnftp
+      register: tnftp_check
+      changed_when: false
+      failed_when: false
+
+    ###########################################################################
+    # Assert compliance
+    ###########################################################################
+
+    - name: Assert FTP clients are not installed
+      ansible.builtin.assert:
+        that:
+          - "'install ok installed' not in ftp_check.stdout"
+          - "'install ok installed' not in tnftp_check.stdout"
+        fail_msg: |
+          FTP client package is still installed.
+
+          ftp:
+          {{ ftp_check.stdout | default('not installed') }}
+
+          tnftp:
+          {{ tnftp_check.stdout | default('not installed') }}
+        success_msg: |
+          FTP client packages are not installed.
+          CIS 2.2.6 is compliant.
+
+    ###########################################################################
+    # Display final result
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "CIS 2.2.6 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "ftp: REMOVED"
+          - "tnftp: REMOVED"
+          - "Status: COMPLIANT"
+          - "=============================================="

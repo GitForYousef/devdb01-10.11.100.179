@@ -1,0 +1,159 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# CIS / Tenable Finding:
+# 3.2.3 Ensure rds kernel module is not available
+#
+# Purpose:
+#   Disable the RDS kernel module by:
+#     - Unloading it if currently loaded
+#     - Preventing it from being loaded in the future
+#     - Blacklisting the module
+#
+# IMPORTANT:
+#   Do NOT apply this to Oracle RAC or any application that explicitly
+#   requires the RDS protocol without confirming the impact first.
+#
+###############################################################################
+
+- name: Remediate CIS 3.2.3 - Disable RDS kernel module
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Check whether RDS module is currently loaded
+    ###########################################################################
+
+    - name: Check if RDS kernel module is loaded
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "rds" {print $1}'
+      register: rds_loaded
+      changed_when: false
+
+    - name: Display current RDS module status
+      ansible.builtin.debug:
+        msg: >-
+          RDS module loaded:
+          {{ 'YES' if rds_loaded.stdout | trim == 'rds' else 'NO' }}
+
+    ###########################################################################
+    # 2. Unload RDS if currently loaded
+    ###########################################################################
+
+    - name: Unload RDS kernel module
+      ansible.builtin.command:
+        cmd: modprobe -r rds
+      when: rds_loaded.stdout | trim == "rds"
+      register: rds_unload
+      failed_when: false
+      changed_when: rds_unload.rc == 0
+
+    - name: Report RDS unload result
+      ansible.builtin.debug:
+        msg: >-
+          RDS unload command completed with return code
+          {{ rds_unload.rc | default('N/A') }}
+      when: rds_loaded.stdout | trim == "rds"
+
+    ###########################################################################
+    # 3. Create permanent modprobe configuration
+    ###########################################################################
+
+    - name: Disable RDS kernel module
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/60-rds.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          install rds /bin/false
+          blacklist rds
+      register: rds_config
+
+    ###########################################################################
+    # 4. Refresh kernel module dependency information
+    ###########################################################################
+
+    - name: Refresh kernel module dependencies
+      ansible.builtin.command:
+        cmd: depmod -a
+      when: rds_config.changed
+      changed_when: true
+
+    ###########################################################################
+    # 5. Verify configuration file
+    ###########################################################################
+
+    - name: Read RDS configuration
+      ansible.builtin.slurp:
+        src: /etc/modprobe.d/60-rds.conf
+      register: rds_config_check
+
+    - name: Verify RDS configuration
+      ansible.builtin.assert:
+        that:
+          - "'install rds /bin/false' in (rds_config_check.content | b64decode)"
+          - "'blacklist rds' in (rds_config_check.content | b64decode)"
+        fail_msg: "RDS modprobe configuration is incorrect."
+        success_msg: "RDS modprobe configuration is correctly configured."
+
+    ###########################################################################
+    # 6. Verify RDS is not currently loaded
+    ###########################################################################
+
+    - name: Check RDS module after remediation
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "rds" {print $1}'
+      register: rds_after
+      changed_when: false
+
+    - name: Verify RDS module is unloaded
+      ansible.builtin.assert:
+        that:
+          - rds_after.stdout | trim == ""
+        fail_msg: "RDS kernel module is still loaded."
+        success_msg: "RDS kernel module is not loaded."
+
+    ###########################################################################
+    # 7. Test that RDS cannot be loaded
+    ###########################################################################
+
+    - name: Attempt to load RDS module
+      ansible.builtin.command:
+        cmd: modprobe rds
+      register: rds_modprobe_test
+      changed_when: false
+      failed_when: false
+
+    - name: Check whether RDS was loaded by the test
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "rds" {print $1}'
+      register: rds_final
+      changed_when: false
+
+    - name: Verify RDS cannot be loaded
+      ansible.builtin.assert:
+        that:
+          - rds_final.stdout | trim == ""
+        fail_msg: "RDS module can still be loaded."
+        success_msg: "RDS module is successfully disabled."
+
+    ###########################################################################
+    # 8. Final status
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "RDS CIS 3.2.3 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Configuration: /etc/modprobe.d/60-rds.conf"
+          - "RDS loaded: NO"
+          - "RDS loading disabled: YES"
+          - "Blacklist configured: YES"
+          - "=============================================="

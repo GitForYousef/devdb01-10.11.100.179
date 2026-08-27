@@ -1,0 +1,159 @@
+---
+###############################################################################
+#
+# Ansible Remediation
+# CIS / Tenable Finding:
+# 3.2.4 Ensure sctp kernel module is not available
+#
+# Purpose:
+#   Disable the SCTP kernel module by:
+#     - Unloading it if currently loaded
+#     - Preventing it from being loaded in the future
+#     - Blacklisting the module
+#
+# IMPORTANT:
+#   Do NOT apply this to servers running applications that explicitly require
+#   SCTP, such as telecom/SIGTRAN software or specialized networking products.
+#
+###############################################################################
+
+- name: Remediate CIS 3.2.4 - Disable SCTP kernel module
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+
+    ###########################################################################
+    # 1. Check whether SCTP module is currently loaded
+    ###########################################################################
+
+    - name: Check if SCTP kernel module is loaded
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "sctp" {print $1}'
+      register: sctp_loaded
+      changed_when: false
+
+    - name: Display current SCTP module status
+      ansible.builtin.debug:
+        msg: >-
+          SCTP module loaded:
+          {{ 'YES' if sctp_loaded.stdout | trim == 'sctp' else 'NO' }}
+
+    ###########################################################################
+    # 2. Unload SCTP if currently loaded
+    ###########################################################################
+
+    - name: Unload SCTP kernel module
+      ansible.builtin.command:
+        cmd: modprobe -r sctp
+      when: sctp_loaded.stdout | trim == "sctp"
+      register: sctp_unload
+      failed_when: false
+      changed_when: sctp_unload.rc == 0
+
+    - name: Report SCTP unload result
+      ansible.builtin.debug:
+        msg: >-
+          SCTP unload command completed with return code
+          {{ sctp_unload.rc | default('N/A') }}
+      when: sctp_loaded.stdout | trim == "sctp"
+
+    ###########################################################################
+    # 3. Create permanent modprobe configuration
+    ###########################################################################
+
+    - name: Disable SCTP kernel module
+      ansible.builtin.copy:
+        dest: /etc/modprobe.d/60-sctp.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          install sctp /bin/false
+          blacklist sctp
+      register: sctp_config
+
+    ###########################################################################
+    # 4. Refresh kernel module dependency information
+    ###########################################################################
+
+    - name: Refresh kernel module dependencies
+      ansible.builtin.command:
+        cmd: depmod -a
+      when: sctp_config.changed
+      changed_when: true
+
+    ###########################################################################
+    # 5. Verify configuration file
+    ###########################################################################
+
+    - name: Read SCTP configuration
+      ansible.builtin.slurp:
+        src: /etc/modprobe.d/60-sctp.conf
+      register: sctp_config_check
+
+    - name: Verify SCTP configuration
+      ansible.builtin.assert:
+        that:
+          - "'install sctp /bin/false' in (sctp_config_check.content | b64decode)"
+          - "'blacklist sctp' in (sctp_config_check.content | b64decode)"
+        fail_msg: "SCTP modprobe configuration is incorrect."
+        success_msg: "SCTP modprobe configuration is correctly configured."
+
+    ###########################################################################
+    # 6. Verify SCTP is not currently loaded
+    ###########################################################################
+
+    - name: Check SCTP module after remediation
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "sctp" {print $1}'
+      register: sctp_after
+      changed_when: false
+
+    - name: Verify SCTP module is unloaded
+      ansible.builtin.assert:
+        that:
+          - sctp_after.stdout | trim == ""
+        fail_msg: "SCTP kernel module is still loaded."
+        success_msg: "SCTP kernel module is not loaded."
+
+    ###########################################################################
+    # 7. Test that SCTP cannot be loaded
+    ###########################################################################
+
+    - name: Attempt to load SCTP module
+      ansible.builtin.command:
+        cmd: modprobe sctp
+      register: sctp_modprobe_test
+      changed_when: false
+      failed_when: false
+
+    - name: Check whether SCTP was loaded by the test
+      ansible.builtin.shell: |
+        lsmod | awk '$1 == "sctp" {print $1}'
+      register: sctp_final
+      changed_when: false
+
+    - name: Verify SCTP cannot be loaded
+      ansible.builtin.assert:
+        that:
+          - sctp_final.stdout | trim == ""
+        fail_msg: "SCTP module can still be loaded."
+        success_msg: "SCTP module is successfully disabled."
+
+    ###########################################################################
+    # 8. Final status
+    ###########################################################################
+
+    - name: Display remediation result
+      ansible.builtin.debug:
+        msg:
+          - "=============================================="
+          - "SCTP CIS 3.2.4 REMEDIATION COMPLETE"
+          - "=============================================="
+          - "Configuration: /etc/modprobe.d/60-sctp.conf"
+          - "SCTP loaded: NO"
+          - "SCTP loading disabled: YES"
+          - "Blacklist configured: YES"
+          - "=============================================="

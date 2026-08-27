@@ -1,0 +1,64 @@
+---
+# Ubuntu 22.04 CIS Level 1 - Remaining OpenSCAP Remediation
+#
+# Profile: CIS Ubuntu 22.04 Level 1 Server Benchmark
+#
+# CIS 03: Manual review
+# CIS 04: Ensure sudo logfile exists
+# CIS 05: /etc/issue login banner
+# CIS 06: /etc/issue.net remote login banner
+# CIS 07: /etc/motd message of the day
+
+- name: Remediate remaining Ubuntu 22.04 CIS Level 1 findings
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: true
+  any_errors_fatal: false
+
+  tasks:
+
+
+    # ============================================================
+    # CIS 04 - Ensure Sudo Logfile Exists
+    # ============================================================
+
+    - name: "CIS 04 - Ensure Sudo Logfile Exists"
+      ansible.builtin.shell:
+        cmd: |
+          set -e
+
+          # Only remediate if sudo is installed.
+          if dpkg-query --show --showformat='${db:Status-Status}\n' sudo 2>/dev/null | grep -q '^installed$'; then
+
+              # Make sure the existing sudoers file is valid first.
+              /usr/sbin/visudo -cf /etc/sudoers
+
+              # Back up sudoers before modifying it.
+              cp -a /etc/sudoers /etc/sudoers.bak
+
+              # Add the logfile setting if it does not already exist.
+              if ! grep -Eq '^[[:space:]]*Defaults[[:space:]].*logfile=' /etc/sudoers; then
+                  printf '%s\n' 'Defaults logfile=/var/log/sudo.log' >> /etc/sudoers
+              else
+                  # Replace an existing logfile setting.
+                  sed -Ei \
+                    's|^([[:space:]]*Defaults.*logfile=)[^[:space:]]+|\1/var/log/sudo.log|' \
+                    /etc/sudoers
+              fi
+
+              # Validate the modified sudoers file.
+              if /usr/sbin/visudo -cf /etc/sudoers; then
+                  rm -f /etc/sudoers.bak
+              else
+                  echo "Modified /etc/sudoers failed validation. Reverting."
+                  mv -f /etc/sudoers.bak /etc/sudoers
+                  exit 1
+              fi
+
+          else
+              echo "sudo is not installed. Remediation not applicable."
+          fi
+      register: cis04_result
+      changed_when: cis04_result.rc == 0
+      failed_when: cis04_result.rc != 0
