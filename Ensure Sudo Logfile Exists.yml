@@ -10,8 +10,7 @@
 # CIS 07: /etc/motd message of the day
 
 - name: Remediate remaining Ubuntu 22.04 CIS Level 1 findings
-  hosts: localhost
-  connection: local
+  hosts: all
   become: true
   gather_facts: true
   any_errors_fatal: false
