@@ -3902,7 +3902,7 @@
       register: result_umask_replaced_profile_d
       when:
       - '"linux-base" in ansible_facts.packages'
-      - result_profile_d_files.matched
+      - result_profile_d_files.matched | int > 0
       tags:
       - NIST-800-53-AC-6(1)
       - NIST-800-53-CM-6(a)
@@ -3922,7 +3922,7 @@
         line: umask {{ var_accounts_user_umask }}
       when:
       - '"linux-base" in ansible_facts.packages'
-      - not result_profile_d_files.matched
+      - not result_profile_d_files.matched | int == 0
       tags:
       - NIST-800-53-AC-6(1)
       - NIST-800-53-CM-6(a)
